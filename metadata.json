@@ -1,0 +1,6 @@
+{
+  "name": "CosmoSurge Clinics",
+  "description": "Multispecialty medical center in Zahraa El Maadi, Cairo with online specialist booking, PocketBase integration, SMS appointment confirmations, and SEO-indexed health articles.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
