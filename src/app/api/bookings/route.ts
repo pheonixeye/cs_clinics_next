@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDoctorById } from "@/data/doctors";
 import { saveBookingToPocketBase } from "@/lib/pocketbase";
-import { sendBookingConfirmationSms } from "@/lib/sms";
+import { sendBookingSmsNotifications } from "@/lib/sms";
 import type { BookingPayload, BookingResponse } from "@/types/clinic";
 
 function generateBookingReference(): string {
@@ -76,20 +76,23 @@ export async function POST(request: NextRequest) {
       locale: body.locale === "ar" ? "ar" : "en",
     };
 
-    const [pocketbaseResult, smsResult] = await Promise.all([
+    const [pocketbaseResult, smsResults] = await Promise.all([
       saveBookingToPocketBase(normalizedPayload, bookingReference),
-      sendBookingConfirmationSms(
-        normalizedPayload,
-        bookingReference,
-        doctor?.phone_per
-      ),
+      sendBookingSmsNotifications(normalizedPayload, bookingReference, {
+        personal: doctor?.phone_per,
+        assistant: doctor?.phone_ass,
+      }),
     ]);
 
     const response: BookingResponse = {
       success: true,
       bookingReference,
       pocketbase: pocketbaseResult,
-      sms: smsResult,
+      sms: smsResults.patient,
+      notifications: {
+        doctor: smsResults.doctor,
+        assistant: smsResults.assistant,
+      },
       booking: {
         ...normalizedPayload,
         createdAt: new Date().toISOString(),

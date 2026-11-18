@@ -7,6 +7,7 @@ import { SiteHeader } from "@/components/layout/site-header";
 import { AppProvider } from "@/components/providers/app-provider";
 import { CLINIC_INFO } from "@/data/clinic-info";
 import { getDoctors } from "@/lib/pocketbase";
+import { getSiteUrl } from "@/lib/site";
 import "./globals.css";
 
 const plusJakarta = Plus_Jakarta_Sans({
@@ -37,10 +38,7 @@ const jetbrainsMono = JetBrains_Mono({
   display: "swap",
 });
 
-const siteUrl =
-  process.env.APP_URL && process.env.APP_URL !== "MY_APP_URL"
-    ? process.env.APP_URL
-    : "https://cs-clinics.pages.dev";
+const siteUrl = getSiteUrl();
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),

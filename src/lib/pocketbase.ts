@@ -7,20 +7,16 @@ export function getPocketBaseUrl(): string {
   return (
     process.env.POCKETBASE_URL ||
     process.env.NEXT_PUBLIC_POCKETBASE_URL ||
-    "https://server.drkaz.dev"
+    "https://cosmo-pb.prkln.app"
   ).replace(/\/$/, "");
 }
 
 export function getBookingsCollection(): string {
-  return process.env.POCKETBASE_BOOKINGS_COLLECTION || "appointments";
+  return process.env.POCKETBASE_BOOKINGS_COLLECTION || "bookings";
 }
 
 export function getArticlesCollection(): string {
   return process.env.POCKETBASE_ARTICLES_COLLECTION || "articles";
-}
-
-export function getDoctorsCollection(): string {
-  return process.env.POCKETBASE_DOCTORS_COLLECTION || "doctors";
 }
 
 export async function createPocketBaseClient(): Promise<PocketBase> {
@@ -112,70 +108,28 @@ export async function saveBookingToPocketBase(
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const FAILURE_BACKOFF_MS = 60 * 1000;
 
-let doctorsCache: { data: Doctor[]; expiresAt: number } | null = null;
 let articlesCache: { data: Article[]; expiresAt: number } | null = null;
 
+// The specialist directory is curated in src/data/doctors.ts. There is no
+// PocketBase "doctors" collection; this function keeps the async signature
+// used by pages and the API route while always returning the local data.
 export async function getDoctors(): Promise<Doctor[]> {
-  const now = Date.now();
-  if (doctorsCache && doctorsCache.expiresAt > now) {
-    return doctorsCache.data;
-  }
-
-  const endpoint = getPocketBaseUrl();
-  const collection = getDoctorsCollection();
-
-  try {
-    const res = await fetch(
-      `${endpoint}/api/collections/${collection}/records?perPage=50&filter=(published=true)`,
-      {
-        next: { revalidate: 300 },
-        signal: AbortSignal.timeout(750),
-      }
-    );
-
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data?.items) && data.items.length > 0) {
-        const mapped = data.items.map((item: Record<string, unknown>) => ({
-          _id: Number(item._id ?? item.docid ?? 0),
-          docname: String(item.docname ?? ""),
-          docname_a: String(item.docname_a ?? item.docname ?? ""),
-          clinic: String(item.clinic ?? ""),
-          clinic_a: String(item.clinic_a ?? item.clinic ?? ""),
-          phone_per: String(item.phone_per ?? ""),
-          phone_ass: String(item.phone_ass ?? "01021646574"),
-          procedures: Array.isArray(item.procedures)
-            ? (item.procedures as string[])
-            : ["Consultation"],
-          procedures_a: Array.isArray(item.procedures_a)
-            ? (item.procedures_a as string[])
-            : ["كشف"],
-          titles: Array.isArray(item.titles) ? (item.titles as string[]) : [],
-          titles_a: Array.isArray(item.titles_a)
-            ? (item.titles_a as string[])
-            : [],
-          affiliates: Array.isArray(item.affiliates)
-            ? (item.affiliates as string[])
-            : [],
-          affiliates_a: Array.isArray(item.affiliates_a)
-            ? (item.affiliates_a as string[])
-            : [],
-          fields: Array.isArray(item.fields) ? (item.fields as string[]) : [],
-          grid: Boolean(item.grid ?? true),
-          published: Boolean(item.published ?? true),
-          schedule: Array.isArray(item.schedule) ? item.schedule : [],
-          reviews: Array.isArray(item.reviews) ? item.reviews : [],
-        }));
-        doctorsCache = { data: mapped, expiresAt: now + CACHE_TTL_MS };
-        return mapped;
-      }
-    }
-  } catch {
-    // Graceful fallback to verified clinic directory
-  }
-
-  doctorsCache = { data: DOCTORS_DATA, expiresAt: now + FAILURE_BACKOFF_MS };
   return DOCTORS_DATA;
+}
+
+/** Prefer an image uploaded to PocketBase; fall back to a legacy image path. */
+function getArticleCoverUrl(item: Record<string, unknown>): string {
+  const fileName =
+    typeof item.image === "string" ? item.image.split(",")[0].trim() : "";
+  if (fileName && item.id) {
+    const collection = String(item.collectionId ?? getArticlesCollection());
+    return `${getPocketBaseUrl()}/api/files/${collection}/${String(item.id)}/${encodeURIComponent(
+      fileName
+    )}`;
+  }
+
+  const legacyPath = typeof item.coverImage === "string" ? item.coverImage.trim() : "";
+  return legacyPath || "/images/clinic_consultation_suite.jpg";
 }
 
 export async function getArticles(): Promise<Article[]> {
@@ -188,11 +142,13 @@ export async function getArticles(): Promise<Article[]> {
   const collection = getArticlesCollection();
 
   try {
+    // Articles are read once at build time and baked into the static pages.
+    // force-cache keeps request-time rendering from ever hitting PocketBase.
     const res = await fetch(
       `${endpoint}/api/collections/${collection}/records?perPage=50&sort=-publishedAt&filter=(published=true)`,
       {
-        next: { revalidate: 300 },
-        signal: AbortSignal.timeout(750),
+        cache: "force-cache",
+        signal: AbortSignal.timeout(5000),
       }
     );
 
@@ -215,10 +171,10 @@ export async function getArticles(): Promise<Article[]> {
               item.updatedAt ?? item.updated ?? new Date().toISOString().slice(0, 10)
             ).slice(0, 10),
             readTimeMinutes: Number(item.readTimeMinutes ?? 4),
-            coverImage: String(
-              item.coverImage ?? "/images/clinic_consultation_suite.jpg"
+            coverImage: getArticleCoverUrl(item),
+            coverAlt: String(
+              item.coverAlt ?? item.title ?? "CosmoSurge Medical Article"
             ),
-            coverAlt: String(item.coverAlt ?? item.title ?? "CosmoSurge Medical Article"),
             authorId: Number(item.authorId ?? 111111),
             authorName: String(item.authorName ?? "CosmoSurge Medical Team"),
             authorName_a: String(item.authorName_a ?? "فريق أطباء كوزموسيرج"),

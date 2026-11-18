@@ -1,14 +1,95 @@
 import { CLINIC_INFO } from "@/data/clinic-info";
 import { formatClinicHour, translateDay } from "@/data/doctors";
-import type { BookingPayload } from "@/types/clinic";
+import type { BookingPayload, SmsDispatchResult } from "@/types/clinic";
 
-export interface SmsDispatchResult {
-  sent: boolean;
-  provider: string;
-  recipient: string;
-  preview: string;
-  httpStatus?: number;
-  note?: string;
+export interface BookingSmsResults {
+  patient: SmsDispatchResult;
+  doctor: SmsDispatchResult | null;
+  assistant: SmsDispatchResult | null;
+}
+
+export interface DoctorPhones {
+  personal?: string;
+  assistant?: string;
+}
+
+const SMS_HEADERS: Record<string, string> = {
+  "Content-Type": "application/json",
+  Accept: "application/json",
+  "Accept-Language": "en-US",
+};
+
+function smsConfig() {
+  return {
+    baseUrl: (
+      process.env.BASE_URL ||
+      process.env.SMS_BASE_URL ||
+      ""
+    )
+      .trim()
+      .replace(/\/$/, ""),
+    username: (process.env.USERNAME || process.env.SMS_USERNAME || "").trim(),
+    password: (process.env.PASSWORD || process.env.SMS_PASSWORD || "").trim(),
+    senderName: (process.env.SENDERNAME || process.env.SMS_SENDERNAME || "").trim(),
+  };
+}
+
+/** Build the provider's GET URL: base?username=&password=&sendername=&mobiles=&message= */
+function buildProviderUrl(mobile: string, message: string): string | null {
+  const { baseUrl, username, password, senderName } = smsConfig();
+  if (!baseUrl || !username || !password || !senderName) return null;
+
+  const params = new URLSearchParams({
+    username,
+    password,
+    sendername: senderName,
+    mobiles: mobile.replace(/[\s()-]/g, ""),
+    message,
+  });
+  return `${baseUrl}?${params.toString()}`;
+}
+
+/** Send one SMS through the configured third-party GET API. */
+export async function sendSms(
+  mobile: string,
+  message: string
+): Promise<SmsDispatchResult> {
+  const { baseUrl } = smsConfig();
+  const targetUrl = buildProviderUrl(mobile, message);
+
+  const result: SmsDispatchResult = {
+    sent: false,
+    provider: baseUrl,
+    recipient: mobile,
+    preview: message,
+  };
+
+  if (!targetUrl) {
+    return {
+      ...result,
+      note: "SMS provider is not configured (BASE_URL, USERNAME, PASSWORD, SENDERNAME required)",
+    };
+  }
+
+  try {
+    const response = await fetch(targetUrl, {
+      method: "GET",
+      headers: SMS_HEADERS,
+      signal: AbortSignal.timeout(5000),
+    });
+
+    return {
+      ...result,
+      sent: response.ok,
+      httpStatus: response.status,
+      ...(response.ok
+        ? {}
+        : { note: `SMS provider responded with HTTP ${response.status}` }),
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "SMS provider unreachable";
+    return { ...result, note: `SMS dispatch failed: ${message}` };
+  }
 }
 
 export function buildConfirmationSmsText(
@@ -31,95 +112,55 @@ export function buildConfirmationSmsText(
   return `Confirmed at ${CLINIC_INFO.brandName} (${bookingReference}). Dr. ${booking.doctorName} (${booking.clinic}) on ${booking.scheduleDay}, ${booking.appointmentDate} (${timeWindow}). Zahraa El Maadi, El Nada Tower. Tel: ${CLINIC_INFO.landline}`;
 }
 
-export async function sendBookingConfirmationSms(
+/** Internal notification: patient name, phone and appointment date (+ time and reference). */
+export function buildStaffNotificationSmsText(
   booking: BookingPayload,
   bookingReference: string,
-  doctorPersonalPhone?: string
+  includeDoctorName = false
+): string {
+  const timeWindow = `${formatClinicHour(booking.scheduleStart, booking.locale)} - ${formatClinicHour(
+    booking.scheduleEnd,
+    booking.locale
+  )}`;
+
+  if (booking.locale === "ar") {
+    const doctor = includeDoctorName ? ` مع د/ ${booking.doctorNameAr || booking.doctorName}` : "";
+    return `حجز جديد${doctor}: ${booking.patientName} - ${booking.patientPhone} - ${booking.appointmentDate} (${timeWindow}). المرجع: ${bookingReference}`;
+  }
+
+  const doctor = includeDoctorName ? ` with Dr. ${booking.doctorName}` : "";
+  return `New booking${doctor}: ${booking.patientName} - ${booking.patientPhone} - ${booking.appointmentDate} (${timeWindow}). Ref: ${bookingReference}`;
+}
+
+/** Send the patient confirmation only (kept for direct callers). */
+export async function sendBookingConfirmationSms(
+  booking: BookingPayload,
+  bookingReference: string
 ): Promise<SmsDispatchResult> {
-  const baseProviderUrl = (
-    process.env.SMS_PROVIDER_URL || "https://notifier.drkaz.dev"
-  ).replace(/\/$/, "");
-  const topic =
-    doctorPersonalPhone || process.env.SMS_CLINIC_TOPIC || "01091966224";
-  const apiKey = process.env.SMS_PROVIDER_API_KEY || "";
-  const authHeader = process.env.SMS_PROVIDER_AUTH_HEADER || "Authorization";
-  const senderId = process.env.SMS_SENDER_ID || "CosmoSurge";
+  return sendSms(booking.patientPhone, buildConfirmationSmsText(booking, bookingReference));
+}
 
-  const messageText = buildConfirmationSmsText(booking, bookingReference);
+/**
+ * Send three notifications in parallel: confirmation to the patient, a booking
+ * alert to the doctor's personal phone, and the same alert plus the doctor's
+ * name to the doctor's assistant.
+ */
+export async function sendBookingSmsNotifications(
+  booking: BookingPayload,
+  bookingReference: string,
+  doctorPhones: DoctorPhones = {}
+): Promise<BookingSmsResults> {
+  const patientMessage = buildConfirmationSmsText(booking, bookingReference);
+  const doctorMessage = buildStaffNotificationSmsText(booking, bookingReference);
+  const assistantMessage = buildStaffNotificationSmsText(booking, bookingReference, true);
 
-  // Supports both custom notifier.drkaz.dev query convention and generic REST SMS webhooks
-  const targetUrl = baseProviderUrl.includes("notifier.drkaz.dev")
-    ? `${baseProviderUrl}&topic=${encodeURIComponent(topic)}`
-    : baseProviderUrl;
+  const [patient, doctorResult, assistantResult] = await Promise.all([
+    sendSms(booking.patientPhone, patientMessage),
+    doctorPhones.personal ? sendSms(doctorPhones.personal, doctorMessage) : Promise.resolve(null),
+    doctorPhones.assistant
+      ? sendSms(doctorPhones.assistant, assistantMessage)
+      : Promise.resolve(null),
+  ]);
 
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-
-  if (apiKey) {
-    headers[authHeader] =
-      authHeader.toLowerCase() === "authorization" &&
-      !apiKey.toLowerCase().startsWith("bearer ")
-        ? `Bearer ${apiKey}`
-        : apiKey;
-  }
-
-  const requestBody = {
-    // Custom provider standard fields
-    to: booking.patientPhone,
-    sender: senderId,
-    message: messageText,
-    bookingReference,
-    // Compatibility fields matching cs-clinics notifier
-    docid: booking.doctorId,
-    docname: booking.doctorName,
-    clinic: booking.clinic,
-    name: booking.patientName,
-    phone: booking.patientPhone,
-    dob: booking.dateOfBirth || "",
-    date: booking.appointmentDate,
-    schedule: {
-      day: booking.scheduleDay,
-      start: booking.scheduleStart,
-      end: booking.scheduleEnd,
-    },
-  };
-
-  try {
-    const response = await fetch(targetUrl, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(requestBody),
-      signal: AbortSignal.timeout(5000),
-    });
-
-    if (response.ok) {
-      return {
-        sent: true,
-        provider: baseProviderUrl,
-        recipient: booking.patientPhone,
-        preview: messageText,
-        httpStatus: response.status,
-      };
-    }
-
-    return {
-      sent: false,
-      provider: baseProviderUrl,
-      recipient: booking.patientPhone,
-      preview: messageText,
-      httpStatus: response.status,
-      note: `SMS provider responded with HTTP ${response.status}`,
-    };
-  } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "SMS provider unreachable";
-    return {
-      sent: false,
-      provider: baseProviderUrl,
-      recipient: booking.patientPhone,
-      preview: messageText,
-      note: `SMS dispatch queued (${message})`,
-    };
-  }
+  return { patient, doctor: doctorResult, assistant: assistantResult };
 }

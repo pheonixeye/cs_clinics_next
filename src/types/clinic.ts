@@ -92,6 +92,15 @@ export interface BookingPayload {
   locale: Locale;
 }
 
+export interface SmsDispatchResult {
+  sent: boolean;
+  provider: string;
+  recipient: string;
+  preview: string;
+  httpStatus?: number;
+  note?: string;
+}
+
 export interface BookingResponse {
   success: boolean;
   bookingReference: string;
@@ -109,6 +118,10 @@ export interface BookingResponse {
     preview: string;
     httpStatus?: number;
     note?: string;
+  };
+  notifications: {
+    doctor: SmsDispatchResult | null;
+    assistant: SmsDispatchResult | null;
   };
   booking: BookingPayload & {
     createdAt: string;

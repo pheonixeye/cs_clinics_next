@@ -1,11 +1,9 @@
 import type { MetadataRoute } from "next";
 import { getArticles, getDoctors } from "@/lib/pocketbase";
+import { getSiteUrl } from "@/lib/site";
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const baseUrl =
-    process.env.APP_URL && process.env.APP_URL !== "MY_APP_URL"
-      ? process.env.APP_URL.replace(/\/$/, "")
-      : "https://cs-clinics.pages.dev";
+  const baseUrl = getSiteUrl();
 
   const [doctors, articles] = await Promise.all([getDoctors(), getArticles()]);
 

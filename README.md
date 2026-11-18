@@ -2,7 +2,7 @@
 
 Arabic-first marketing and appointment website for **CosmoSurge Clinics**, a multispecialty medical center in Zahraa El Maadi, Cairo. The site lets visitors browse specialists and their weekly clinic schedules, read specialist-authored health articles, and book an appointment online with an instant SMS confirmation.
 
-Built with the Next.js App Router. Content comes from a PocketBase backend with curated local data as a fallback, so the site still renders if the backend is unavailable.
+Built with the Next.js App Router. Articles are read from PocketBase at build time and rendered as static HTML (with curated local data as a fallback), bookings are written to PocketBase, and the specialist directory is bundled locally.
 
 ## Features
 
@@ -10,16 +10,16 @@ Built with the Next.js App Router. Content comes from a PocketBase backend with 
 - **Light / dark theme** — persisted in `localStorage` / `sessionStorage` with safe fallbacks for restricted browser contexts.
 - **Doctor directory** — 10 specialties with filters, profiles, qualifications, clinic hours, reviews, and related articles.
 - **Booking flow** — embedded widget + global dialog; doctors, upcoming dates derived from each doctor's schedule, procedure, patient details, client- and server-side validation, and a confirmation screen with a `CS-######` reference.
-- **Persistence & notifications** — bookings are saved to a PocketBase `appointments` collection and dispatched to an SMS webhook in parallel; failures are reported in the API response without blocking the confirmation.
-- **Health journal** — article index and detail pages with sections, FAQs, author info, reading time, and related posts.
-- **SEO** — Arabic/English metadata, Open Graph and Twitter cards, `MedicalClinic` / `Physician` / `MedicalWebPage` JSON-LD, canonical URLs, generated `sitemap.xml` and `robots.ts`.
-- **Resilient data layer** — 5-minute in-memory cache, `next: { revalidate: 300 }` fetches, a 750 ms backend timeout, and graceful fallback to bundled data.
+- **Persistence & notifications** — bookings are saved to a PocketBase `bookings` collection and dispatched to an SMS webhook in parallel; failures are reported in the API response without blocking the confirmation.
+- **Health journal** — statically generated article index and detail pages with sections, FAQs, author info, reading time, and related posts.
+- **SEO** — Arabic-first article metadata with English alternates, absolute Open Graph images with alt text, `MedicalClinic` / `Physician` / `MedicalWebPage` JSON-LD, canonical URLs, generated `sitemap.xml` and `robots.ts`.
+- **Static article delivery** — PocketBase is queried once during `next build` with `cache: "force-cache"`; blog pages export `dynamic = "force-static"` and are served as pre-rendered HTML without a runtime backend request. A 5 s build-time timeout and bundled fallback keep builds resilient.
 
 ## Tech stack
 
 | Area | Choice |
 | --- | --- |
-| Framework | Next.js 16 (App Router, React Server Components, ISR) |
+| Framework | Next.js 16 (App Router, React Server Components, static generation) |
 | UI | React 19, TypeScript, Tailwind CSS v4, Radix UI (Dialog/Select/Tabs), lucide-react, Motion |
 | Fonts | Plus Jakarta Sans, DM Sans, Cairo (Arabic), JetBrains Mono via `next/font/google` |
 | Backend | PocketBase (`pocketbase` SDK for writes, REST for reads) |
@@ -62,20 +62,35 @@ Copy `.env.example` to `.env.local`. All variables are optional for local UI dev
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `APP_URL` | `https://cs-clinics.pages.dev` | Canonical base URL for metadata, sitemap, and robots |
-| `POCKETBASE_URL` | `https://server.drkaz.dev` | Server-side PocketBase endpoint |
+| `POCKETBASE_URL` | `https://cosmo-pb.prkln.app` | Deployment PocketBase instance used for reads and writes |
 | `NEXT_PUBLIC_POCKETBASE_URL` | same as above | Public fallback for the PocketBase URL |
-| `POCKETBASE_BOOKINGS_COLLECTION` | `appointments` | Collection for created bookings |
+| `POCKETBASE_BOOKINGS_COLLECTION` | `bookings` | Collection for created bookings |
 | `POCKETBASE_ARTICLES_COLLECTION` | `articles` | Collection for articles |
-| `POCKETBASE_DOCTORS_COLLECTION` | `doctors` | Collection for doctors |
 | `POCKETBASE_ADMIN_EMAIL` / `POCKETBASE_ADMIN_PASSWORD` | empty | Optional superuser login for restricted collections |
-| `SMS_PROVIDER_URL` | `https://notifier.drkaz.dev` | SMS webhook endpoint |
-| `SMS_PROVIDER_API_KEY` | empty | Sent via `SMS_PROVIDER_AUTH_HEADER` |
-| `SMS_PROVIDER_AUTH_HEADER` | `Authorization` | Header name for the API key |
-| `SMS_CLINIC_TOPIC` | `01091966224` | Default notifier topic when a doctor has no personal phone |
-| `SMS_SENDER_ID` | `CosmoSurge` | Sender ID in the SMS payload |
+| `BASE_URL` | empty | Third-party SMS API base URL |
+| `USERNAME` / `PASSWORD` | empty | SMS API credentials (sent as query parameters) |
+| `SENDERNAME` | empty | SMS sender ID |
+| `SMS_BASE_URL`, `SMS_USERNAME`, `SMS_PASSWORD`, `SMS_SENDERNAME` | empty | Optional prefixed aliases for the four variables above |
 | `GEMINI_API_KEY` | — | Unused by current source (AI Studio legacy) |
 
-If `notifier.drkaz.dev` is used, the app appends `&topic=<doctor phone or clinic topic>` to the URL, so the configured URL should already contain a `?` query string. Generic REST providers receive a JSON POST containing `to`, `sender`, `message`, `bookingReference`, plus booking/doctor fields.
+There is no doctors collection: the directory is maintained in `src/data/doctors.ts`. `.env.local` (git-ignored) carries the deployment URLs and credentials; mirror these variables in your hosting provider's environment settings.
+
+SMS delivery uses a single `GET` request to `<BASE_URL>?username=<USERNAME>&password=<PASSWORD>&sendername=<SENDERNAME>&mobiles=<phone>&message=<text>` with `Content-Type: application/json`, `Accept: application/json`, and `Accept-Language: en-US` headers. All values are URL-encoded. Three messages are dispatched per booking: the confirmation to the patient, a booking alert to the doctor's personal phone, and the same alert plus the doctor's name to the assistant's phone. Provider credentials are never echoed in API responses.
+
+### PocketBase collections
+
+Only two application collections are needed on the deployment instance (`https://cosmo-pb.prkln.app`):
+
+| Collection | Access rules | Fields |
+| --- | --- | --- |
+| `articles` | list/view public; create/update/delete admin-only | `slug` (unique), `title`, `title_a`, `excerpt`, `excerpt_a`, `category`, `category_a`, `publishedAt` (date), `updatedAt` (date), `readTimeMinutes`, `image` (file, single image ≤ 5 MB), `coverImage` (legacy text path), `coverAlt`, `authorId`, `authorName`, `authorName_a`, `authorTitle`, `authorTitle_a`, `keywords` (JSON), `sections` (JSON), `faqs` (JSON), `published` (bool) |
+| `bookings` | create public; list/view/update/delete admin-only | `booking_ref` (unique), `docid`, `docname`, `docname_a`, `clinic`, `clinic_a`, `procedure`, `schedule_day`, `schedule_start`, `schedule_end`, `date`, `name`, `phone`, `dob`, `notes`, `locale`, `status` |
+
+`articles` is sorted by `-publishedAt` and filtered to `published = true`; remote records override bundled articles with matching slugs. The instance is seeded with the six bundled articles, so the static build is sourced from PocketBase.
+
+Upload a cover image to an article's `image` file field in PocketBase (JPEG, PNG, WebP, GIF or AVIF, up to 5 MB) — the app turns it into a public PocketBase file URL for the article page, the journal index, and the social/SEO tags, so no image needs to be added to this project. `coverImage` is kept only as a fallback for legacy text paths, and `coverAlt` supplies the image alt text.
+
+`bookings` is write-only from the site — patient records are not exposed publicly.
 
 ## Routes and API
 
@@ -93,7 +108,7 @@ If `notifier.drkaz.dev` is used, the app appends `&topic=<doctor phone or clinic
 
 ### API endpoints
 
-- `GET /api/doctors` — published doctors from PocketBase or fallback data: `{ "doctors": [...] }`.
+- `GET /api/doctors` — bundled specialist directory: `{ "doctors": [...] }`.
 - `GET /api/articles` — published articles: `{ "articles": [...] }`.
 - `POST /api/bookings` — validates name, Egyptian/international phone, doctor, date, and time window; persists to PocketBase and dispatches SMS concurrently. Returns `201` with a booking reference plus `pocketbase` and `sms` status objects, or `400`/`500` with an error message.
 
@@ -113,7 +128,7 @@ src/
     providers/           Theme / locale / booking context
     ui/                  Button, input, dialog, image helpers
   data/                  Curated doctors (10), articles (6), clinic info
-  lib/                   PocketBase client/cache, SMS dispatch, cn() helper
+  lib/                   PocketBase client/cache, site URL helper, SMS dispatch, cn() helper
   types/                 Shared TypeScript interfaces
 public/
   images/                Clinic and article photography
@@ -123,8 +138,8 @@ scripts/run-next.mjs     Next.js wrapper handling PORT/host forwarding
 
 ## Deployment notes
 
-- Run `npm run build` then `npm run start`; set `APP_URL` to the real public origin so canonical links, Open Graph images, sitemap, and robots are correct.
-- Pages use ISR (`revalidate = 300`), so content updates appear within about five minutes.
-- Read-only features degrade to bundled data when PocketBase is slow or unreachable; creating bookings requires a reachable PocketBase collection with the fields listed in `src/lib/pocketbase.ts` (`booking_ref`, `docid`, `date`, `name`, `phone`, `status`, etc.).
+- Run `npm run build` then `npm run start`; set `APP_URL` to the real public origin so canonical links, absolute Open Graph images, sitemap, and robots are correct.
+- Blog routes are fully static: the `articles` collection is read during the build, `generateStaticParams()` creates a page for every published slug, and no PocketBase request occurs at request time. Rebuild to publish article changes. Other content pages still use ISR (`revalidate = 300`).
+- If PocketBase is unreachable at build time, bundled articles are used; creating bookings still requires a reachable `bookings` collection with the fields listed in `src/lib/pocketbase.ts` (`booking_ref`, `docid`, `date`, `name`, `phone`, `status`, etc.).
 - The booking endpoint has no authentication or slot-locking: it validates input format but does not prevent double bookings. Add rate limiting and availability checks before exposing it at scale.
 - Next.js images are unoptimized (`next.config.ts`) so no image optimizer service is required.

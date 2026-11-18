@@ -245,6 +245,29 @@ export const DOCTORS_DATA: Doctor[] = [
     ],
     reviews: [],
   },
+  {
+    _id: 234567,
+    docname: "Michelle Elias",
+    docname_a: "ميشيل الياس",
+    clinic: "Gastroenterology",
+    clinic_a: "الجهاز الهضمي",
+    phone_per: "01005317057",
+    phone_ass: "01021646574",
+    procedures: ["Consultation"],
+    procedures_a: ["كشف"],
+    titles: ["Gastroeneterology Consultant"],
+    titles_a: ["استشاري الجهاز الهضمي و المناظير"],
+    affiliates: [],
+    affiliates_a: [],
+    fields: [],
+    grid: true,
+    published: true,
+    schedule: [
+      { day: "Monday", intday: 1, start: 19, end: 22 },
+      { day: "Thursday", intday: 4, start: 19, end: 22 },
+    ],
+    reviews: [],
+  },
 ];
 
 const DAY_TRANSLATIONS: Record<string, string> = {
