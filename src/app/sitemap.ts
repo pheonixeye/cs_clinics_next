@@ -2,6 +2,8 @@ import type { MetadataRoute } from "next";
 import { getArticles, getDoctors } from "@/lib/pocketbase";
 import { getSiteUrl } from "@/lib/site";
 
+export const dynamic = "force-static";
+
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const baseUrl = getSiteUrl();
 

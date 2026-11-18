@@ -3,6 +3,7 @@ node_modules/
 next-env.d.ts
 build/
 dist/
+out/
 coverage/
 .DS_Store
 *.log

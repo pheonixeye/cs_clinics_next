@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "node scripts/run-next.mjs dev",
     "build": "next build",
-    "start": "node scripts/run-next.mjs start",
-    "clean": "rm -rf .next dist server.js",
+    "start": "npx wrangler pages dev out",
+    "clean": "rm -rf .next out dist server.js",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

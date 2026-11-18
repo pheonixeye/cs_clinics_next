@@ -1,7 +1,7 @@
 import PocketBase from "pocketbase";
-import { ARTICLES_DATA } from "@/data/articles";
-import { DOCTORS_DATA } from "@/data/doctors";
-import type { Article, BookingPayload, Doctor } from "@/types/clinic";
+import { ARTICLES_DATA } from "../data/articles";
+import { DOCTORS_DATA } from "../data/doctors";
+import type { Article, BookingPayload, Doctor } from "../types/clinic";
 
 export function getPocketBaseUrl(): string {
   return (

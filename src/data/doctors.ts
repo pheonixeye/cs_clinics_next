@@ -1,4 +1,4 @@
-import type { Doctor, Locale } from "@/types/clinic";
+import type { Doctor, Locale } from "../types/clinic";
 
 export const DOCTORS_DATA: Doctor[] = [
   {

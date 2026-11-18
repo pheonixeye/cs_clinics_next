@@ -43,17 +43,17 @@ cp .env.example .env.local  # then edit the values you need
 npm run dev                 # http://localhost:3000
 ```
 
-The `dev` and `start` scripts use `scripts/run-next.mjs`, which binds `0.0.0.0` and honours `PORT`, `--port=<n>`, and `--host=<name>` (useful in containers and cloud sandboxes).
+The `dev` script uses `scripts/run-next.mjs`, which binds `0.0.0.0` and honours `PORT`, `--port=<n>`, and `--host=<name>` (useful in containers and cloud sandboxes). Static output is served with the Cloudflare Pages tooling instead.
 
 ### Scripts
 
 | Command | Description |
 | --- | --- |
-| `npm run dev` | Start the Next.js development server |
-| `npm run build` | Production build |
-| `npm run start` | Serve the production build |
+| `npm run dev` | Start the Next.js development server (UI only; no Pages Function) |
+| `npm run build` | Export the static site to `out/` |
+| `npm run start` | Preview `out/` locally with `wrangler pages dev`, including `/api/bookings` |
 | `npm run lint` | Type-check with `tsc --noEmit` |
-| `npm run clean` | Remove `.next`, `dist`, and `server.js` |
+| `npm run clean` | Remove `.next`, `out`, `dist`, and `server.js` |
 
 ## Configuration
 
@@ -106,11 +106,9 @@ Upload a cover image to an article's `image` file field in PocketBase (JPEG, PNG
 | `/contact` | Address, map embed, phone/WhatsApp/email links, opening hours |
 | `/sitemap.xml`, `/robots.txt` | Generated SEO endpoints |
 
-### API endpoints
+### API endpoint
 
-- `GET /api/doctors` — bundled specialist directory: `{ "doctors": [...] }`.
-- `GET /api/articles` — published articles: `{ "articles": [...] }`.
-- `POST /api/bookings` — validates name, Egyptian/international phone, doctor, date, and time window; persists to PocketBase and dispatches SMS concurrently. Returns `201` with a booking reference plus `pocketbase` and `sms` status objects, or `400`/`500` with an error message.
+- `POST /api/bookings` — a Cloudflare Pages Function (`functions/api/bookings.ts`), not part of the static export. Validates name, Egyptian/international phone, doctor, date, and time window; persists to PocketBase and dispatches the three SMS messages concurrently. Returns `201` with a booking reference plus `pocketbase`, `sms`, and `notifications` status objects, or `400`/`500` with an error message.
 
 Types for all payloads and responses live in `src/types/clinic.ts`.
 
@@ -118,7 +116,7 @@ Types for all payloads and responses live in `src/types/clinic.ts`.
 
 ```text
 src/
-  app/                   Routes, API handlers, layout, globals.css, sitemap, robots
+  app/                   Static routes, layout, globals.css, sitemap, robots
   components/
     blog/                Article index and article view
     booking/             Booking widget and global booking dialog
@@ -128,18 +126,32 @@ src/
     providers/           Theme / locale / booking context
     ui/                  Button, input, dialog, image helpers
   data/                  Curated doctors (10), articles (6), clinic info
-  lib/                   PocketBase client/cache, site URL helper, SMS dispatch, cn() helper
+  lib/                   PocketBase client/cache, booking service, site URL helper, SMS dispatch, cn() helper
   types/                 Shared TypeScript interfaces
+functions/
+  api/bookings.ts        Cloudflare Pages Function for booking writes and SMS
 public/
   images/                Clinic and article photography
   doc_images/            Doctor portrait placeholders keyed by ID
 scripts/run-next.mjs     Next.js wrapper handling PORT/host forwarding
+out/                     Generated static site (build output, git-ignored)
 ```
 
-## Deployment notes
+## Deployment notes (Cloudflare Pages, static)
 
-- Run `npm run build` then `npm run start`; set `APP_URL` to the real public origin so canonical links, absolute Open Graph images, sitemap, and robots are correct.
-- Blog routes are fully static: the `articles` collection is read during the build, `generateStaticParams()` creates a page for every published slug, and no PocketBase request occurs at request time. Rebuild to publish article changes. Other content pages still use ISR (`revalidate = 300`).
+`next.config.ts` sets `output: "export"` and `trailingSlash: true`, so `npm run build` writes a fully static site to **`out/`**.
+
+| Cloudflare Pages setting | Value |
+| --- | --- |
+| Build command | `npm run build` |
+| Build output directory | `out` |
+| Root directory | repository root |
+
+`functions/api/bookings.ts` is picked up automatically by Pages as a function at `/api/bookings`; everything else is pre-rendered HTML, CSS and JS. For local testing of the function, use `npx wrangler pages dev out`, or deploy directly with `npx wrangler pages deploy out`.
+
+- Set `APP_URL` to the real public origin so canonical links, absolute Open Graph images, sitemap, and robots are correct. Set `POCKETBASE_URL`, the collection names, and the four SMS variables in the Pages project's environment settings; Pages exposes them to the function as bindings, which the handler maps onto `process.env`.
+- Blog routes are fully static: the `articles` collection is read during the build, `generateStaticParams()` creates a page for every published slug, and no PocketBase request occurs at request time. Rebuild to publish article changes or image uploads.
 - If PocketBase is unreachable at build time, bundled articles are used; creating bookings still requires a reachable `bookings` collection with the fields listed in `src/lib/pocketbase.ts` (`booking_ref`, `docid`, `date`, `name`, `phone`, `status`, etc.).
 - The booking endpoint has no authentication or slot-locking: it validates input format but does not prevent double bookings. Add rate limiting and availability checks before exposing it at scale.
+- `npm run dev` serves the Next.js app without the Pages Function, so `/api/bookings` is unavailable in that mode; use `wrangler pages dev out` to exercise bookings locally.
 - Next.js images are unoptimized (`next.config.ts`) so no image optimizer service is required.

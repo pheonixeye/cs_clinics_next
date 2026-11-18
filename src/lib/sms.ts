@@ -1,6 +1,6 @@
-import { CLINIC_INFO } from "@/data/clinic-info";
-import { formatClinicHour, translateDay } from "@/data/doctors";
-import type { BookingPayload, SmsDispatchResult } from "@/types/clinic";
+import { CLINIC_INFO } from "../data/clinic-info";
+import { formatClinicHour, translateDay } from "../data/doctors";
+import type { BookingPayload, SmsDispatchResult } from "../types/clinic";
 
 export interface BookingSmsResults {
   patient: SmsDispatchResult;
