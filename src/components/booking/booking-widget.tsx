@@ -259,12 +259,49 @@ export function BookingWidget({
                     ? "تم إرسال رسالة SMS للتأكيد بنجاح"
                     : "SMS confirmation dispatched via custom provider"
                   : isAr
-                    ? "رسالة التأكيد النصية (قيد الإرسال عبر المزود)"
-                    : "SMS notification prepared for dispatch"}
+                    ? "تعذر إرسال رسالة التأكيد"
+                    : "Patient SMS was not sent"}
               </p>
+              {confirmation.sms.note && (
+                <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+                  {confirmation.sms.note}
+                </p>
+              )}
               <p className="mt-1 rounded-lg border border-slate-200 bg-white p-2.5 text-xs leading-relaxed text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
                 {confirmation.sms.preview}
               </p>
+              {confirmation.notifications && (
+                <div className="mt-2 space-y-0.5 text-[11px] text-slate-500 dark:text-slate-400">
+                  <p>
+                    {isAr ? "إشعار الطبيب: " : "Doctor notification: "}
+                    {!confirmation.notifications.doctor
+                      ? isAr
+                        ? "لا يوجد رقم مسجل"
+                        : "no phone on file"
+                      : confirmation.notifications.doctor.sent
+                        ? isAr
+                          ? "تم الإرسال"
+                          : "sent"
+                        : `${isAr ? "لم يتم الإرسال" : "not sent"} — ${
+                            confirmation.notifications.doctor.note ?? ""
+                          }`}
+                  </p>
+                  <p>
+                    {isAr ? "إشعار المساعد: " : "Assistant notification: "}
+                    {!confirmation.notifications.assistant
+                      ? isAr
+                        ? "لا يوجد رقم مسجل"
+                        : "no phone on file"
+                      : confirmation.notifications.assistant.sent
+                        ? isAr
+                          ? "تم الإرسال"
+                          : "sent"
+                        : `${isAr ? "لم يتم الإرسال" : "not sent"} — ${
+                            confirmation.notifications.assistant.note ?? ""
+                          }`}
+                  </p>
+                </div>
+              )}
             </div>
           </div>
 

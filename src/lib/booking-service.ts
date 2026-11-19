@@ -1,6 +1,6 @@
 import { getDoctorById } from "../data/doctors";
 import { saveBookingToPocketBase } from "./pocketbase";
-import { sendBookingSmsNotifications } from "./sms";
+import { sendBookingSmsNotifications, type SmsEnv } from "./sms";
 import type { BookingPayload } from "../types/clinic";
 
 export interface BookingServiceResponse {
@@ -20,7 +20,8 @@ function isValidEgyptianOrIntlPhone(phone: string): boolean {
 
 /** Portable booking handler shared with the Cloudflare Pages Function. */
 export async function processBooking(
-  body: Partial<BookingPayload>
+  body: Partial<BookingPayload>,
+  env: SmsEnv = {}
 ): Promise<BookingServiceResponse> {
   if (!body.patientName || body.patientName.trim().length < 2) {
     return {
@@ -83,10 +84,15 @@ export async function processBooking(
   try {
     const [pocketbaseResult, smsResults] = await Promise.all([
       saveBookingToPocketBase(normalizedPayload, bookingReference),
-      sendBookingSmsNotifications(normalizedPayload, bookingReference, {
-        personal: doctor?.phone_per,
-        assistant: doctor?.phone_ass,
-      }),
+      sendBookingSmsNotifications(
+        normalizedPayload,
+        bookingReference,
+        {
+          personal: doctor?.phone_per,
+          assistant: doctor?.phone_ass,
+        },
+        env
+      ),
     ]);
 
     return {

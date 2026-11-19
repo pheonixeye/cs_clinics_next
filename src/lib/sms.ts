@@ -13,30 +13,62 @@ export interface DoctorPhones {
   assistant?: string;
 }
 
+/** Cloudflare Pages bindings (or process.env) used by the SMS provider. */
+export type SmsEnv = Record<string, string | undefined>;
+
 const SMS_HEADERS: Record<string, string> = {
   "Content-Type": "application/json",
   Accept: "application/json",
   "Accept-Language": "en-US",
 };
 
-function smsConfig() {
+/**
+ * Read a variable from the explicit Pages `env` binding first, then fall back
+ * to `process.env`. Workers don't always provide a usable `process` global, so
+ * explicit bindings are the reliable path in production.
+ */
+function readEnv(env: SmsEnv, key: string): string {
+  const fromBinding = env[key];
+  if (typeof fromBinding === "string" && fromBinding.trim()) {
+    return fromBinding.trim();
+  }
+
+  if (typeof process !== "undefined" && process.env) {
+    const fromProcess = process.env[key];
+    if (typeof fromProcess === "string" && fromProcess.trim()) {
+      return fromProcess.trim();
+    }
+  }
+
+  return "";
+}
+
+function smsConfig(env: SmsEnv = {}) {
+  const baseUrl = readEnv(env, "BASE_URL") || readEnv(env, "SMS_BASE_URL");
   return {
-    baseUrl: (
-      process.env.BASE_URL ||
-      process.env.SMS_BASE_URL ||
-      ""
-    )
-      .trim()
-      .replace(/\/$/, ""),
-    username: (process.env.USERNAME || process.env.SMS_USERNAME || "").trim(),
-    password: (process.env.PASSWORD || process.env.SMS_PASSWORD || "").trim(),
-    senderName: (process.env.SENDERNAME || process.env.SMS_SENDERNAME || "").trim(),
+    baseUrl: baseUrl.replace(/\/$/, ""),
+    username: readEnv(env, "USERNAME") || readEnv(env, "SMS_USERNAME"),
+    password: readEnv(env, "PASSWORD") || readEnv(env, "SMS_PASSWORD"),
+    senderName: readEnv(env, "SENDERNAME") || readEnv(env, "SMS_SENDERNAME"),
   };
 }
 
+function missingConfigKeys(config: ReturnType<typeof smsConfig>): string {
+  const keys: string[] = [];
+  if (!config.baseUrl) keys.push("BASE_URL");
+  if (!config.username) keys.push("USERNAME");
+  if (!config.password) keys.push("PASSWORD");
+  if (!config.senderName) keys.push("SENDERNAME");
+  return keys.join(", ");
+}
+
 /** Build the provider's GET URL: base?username=&password=&sendername=&mobiles=&message= */
-function buildProviderUrl(mobile: string, message: string): string | null {
-  const { baseUrl, username, password, senderName } = smsConfig();
+function buildProviderUrl(
+  mobile: string,
+  message: string,
+  env: SmsEnv = {}
+): string | null {
+  const { baseUrl, username, password, senderName } = smsConfig(env);
   if (!baseUrl || !username || !password || !senderName) return null;
 
   const params = new URLSearchParams({
@@ -52,24 +84,29 @@ function buildProviderUrl(mobile: string, message: string): string | null {
 /** Send one SMS through the configured third-party GET API. */
 export async function sendSms(
   mobile: string,
-  message: string
+  message: string,
+  env: SmsEnv = {}
 ): Promise<SmsDispatchResult> {
-  const { baseUrl } = smsConfig();
-  const targetUrl = buildProviderUrl(mobile, message);
+  const config = smsConfig(env);
+  const targetUrl = buildProviderUrl(mobile, message, env);
 
   const result: SmsDispatchResult = {
     sent: false,
-    provider: baseUrl,
+    provider: config.baseUrl,
     recipient: mobile,
     preview: message,
   };
 
   if (!targetUrl) {
+    const missing = missingConfigKeys(config);
+    console.error(`[SMS] Not sending to ${mobile}: missing ${missing}`);
     return {
       ...result,
-      note: "SMS provider is not configured (BASE_URL, USERNAME, PASSWORD, SENDERNAME required)",
+      note: `SMS provider is not configured (missing: ${missing})`,
     };
   }
+
+  console.log(`[SMS] Sending to ${mobile} via ${config.baseUrl}`);
 
   try {
     const response = await fetch(targetUrl, {
@@ -77,6 +114,8 @@ export async function sendSms(
       headers: SMS_HEADERS,
       signal: AbortSignal.timeout(5000),
     });
+
+    console.log(`[SMS] Provider response for ${mobile}: HTTP ${response.status}`);
 
     return {
       ...result,
@@ -87,8 +126,10 @@ export async function sendSms(
         : { note: `SMS provider responded with HTTP ${response.status}` }),
     };
   } catch (err) {
-    const message = err instanceof Error ? err.message : "SMS provider unreachable";
-    return { ...result, note: `SMS dispatch failed: ${message}` };
+    const failureMessage =
+      err instanceof Error ? err.message : "SMS provider unreachable";
+    console.error(`[SMS] Dispatch failed for ${mobile}: ${failureMessage}`);
+    return { ...result, note: `SMS dispatch failed: ${failureMessage}` };
   }
 }
 
@@ -135,9 +176,14 @@ export function buildStaffNotificationSmsText(
 /** Send the patient confirmation only (kept for direct callers). */
 export async function sendBookingConfirmationSms(
   booking: BookingPayload,
-  bookingReference: string
+  bookingReference: string,
+  env: SmsEnv = {}
 ): Promise<SmsDispatchResult> {
-  return sendSms(booking.patientPhone, buildConfirmationSmsText(booking, bookingReference));
+  return sendSms(
+    booking.patientPhone,
+    buildConfirmationSmsText(booking, bookingReference),
+    env
+  );
 }
 
 /**
@@ -148,17 +194,20 @@ export async function sendBookingConfirmationSms(
 export async function sendBookingSmsNotifications(
   booking: BookingPayload,
   bookingReference: string,
-  doctorPhones: DoctorPhones = {}
+  doctorPhones: DoctorPhones = {},
+  env: SmsEnv = {}
 ): Promise<BookingSmsResults> {
   const patientMessage = buildConfirmationSmsText(booking, bookingReference);
   const doctorMessage = buildStaffNotificationSmsText(booking, bookingReference);
   const assistantMessage = buildStaffNotificationSmsText(booking, bookingReference, true);
 
   const [patient, doctorResult, assistantResult] = await Promise.all([
-    sendSms(booking.patientPhone, patientMessage),
-    doctorPhones.personal ? sendSms(doctorPhones.personal, doctorMessage) : Promise.resolve(null),
+    sendSms(booking.patientPhone, patientMessage, env),
+    doctorPhones.personal
+      ? sendSms(doctorPhones.personal, doctorMessage, env)
+      : Promise.resolve(null),
     doctorPhones.assistant
-      ? sendSms(doctorPhones.assistant, assistantMessage)
+      ? sendSms(doctorPhones.assistant, assistantMessage, env)
       : Promise.resolve(null),
   ]);
 

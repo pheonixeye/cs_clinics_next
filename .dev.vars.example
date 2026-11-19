@@ -1,0 +1,12 @@
+# Cloudflare Pages Function runtime variables for local testing.
+# Copy to .dev.vars and fill in real values; wrangler pages dev reads this file.
+# .env.local is only used by Next.js at build time and is NOT read by Pages Functions.
+
+POCKETBASE_URL="https://cosmo-pb.prkln.app"
+POCKETBASE_BOOKINGS_COLLECTION="bookings"
+POCKETBASE_ARTICLES_COLLECTION="articles"
+
+BASE_URL="https://smssmartegypt.com/sms/api"
+USERNAME=""
+PASSWORD=""
+SENDERNAME=""
